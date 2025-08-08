@@ -1,151 +1,126 @@
 import os
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+import time
+from functools import wraps
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
 from supabase import create_client, Client
 
-# Включаем логирование
+# --- БЛОК 1: ИНИЦИАЛИЗАЦИЯ И КОНФИГУРАЦИЯ ---
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# --- Получаем ключи доступа из переменных окружения (более безопасно) ---
 try:
     BOT_TOKEN = os.environ['BOT_TOKEN']
     SUPABASE_URL = os.environ['SUPABASE_URL']
     SUPABASE_KEY = os.environ['SUPABASE_KEY']
 except KeyError:
-    logger.error("Ключи не найдены! Добавьте BOT_TOKEN, SUPABASE_URL, SUPABASE_KEY в переменные окружения.")
+    logger.error("КРИТИЧЕСКАЯ ОШИБКА: Ключи доступа не найдены! Укажите их в переменных окружения.")
     exit()
 
-# --- Инициализируем клиент Supabase ---
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# --- URL для Web Apps (из вашего кода) ---
+# --- БЛОК 2: КОНФИГУРАЦИЯ НАЗВАНИЙ КОЛОНОК В SUPABASE ---
+USERS_TABLE_TG_ID_COLUMN = 'tg_id'
+USERS_TABLE_TG_USERNAME_COLUMN = 'tg'
+PERSINFO_TABLE_TG_USERNAME_COLUMN = 'tg'
+PERSINFO_TABLE_FULL_NAME_COLUMN = 'operator'
+PERSINFO_TABLE_CITY_COLUMN = 'city'
+PERSINFO_TABLE_TEAM_COLUMN = 'team'
+PERSINFO_TABLE_DOLG_COLUMN = 'dolg'
+
+# --- БЛОК 3: URL ДЛЯ WEB APPS ---
 URL_KNOWLEDGE_BASE = "https://aleksei23122012.teamly.ru/space/00647e86-cd4b-46ef-9903-0af63964ad43/article/17e16e2a-92ff-463c-8bf4-eaaf202c0bc7"
 URL_DASHBOARD = "https://aleksei23122012.github.io/DMdashbordbot/conc/conc.html"
 URL_ALMANAC = "https://aleksei23122012.github.io/DMdashbordbot/ov/ov.html"
 URL_OTZIV = "https://forms.gle/KML4YXA4osd6aaWS7"
 
-# --- НОВЫЙ ФУНКЦИОНАЛ: АВТОРИЗАЦИЯ ---
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Обработчик команды /start. Начинает процесс верификации пользователя.
-    """
-    user = update.effective_user
-    logger.info(f"Пользователь {user.username} (ID: {user.id}) нажал /start.")
-
-    # 1. Сохраняем информацию о пользователе в таблицу 'users'
-    try:
-        supabase.table('users').insert({
-            'telegram_id': user.id,
-            'telegram_username': user.username
-        }).execute()
-        logger.info(f"Пользователь {user.username} добавлен/обновлен в таблице 'users'.")
-    except Exception as e:
-        logger.error(f"Ошибка при добавлении пользователя в 'users': {e}")
-        # Не останавливаем процесс, даже если запись не удалась (например, из-за дубликата)
-
-    # 2. Ищем пользователя в таблице 'persinfo' по его telegram_username
-    try:
-        response = supabase.table('persinfo').select('full_name, city, team').eq('telegram_username', user.username).execute()
-        
-        if not response.data:
-            # Если пользователь не найден в таблице persinfo
-            await update.message.reply_text(
-                "Здравствуйте! Я не смог найти вас в базе сотрудников. "
-                "Пожалуйста, убедитесь, что ваш логин в Telegram указан верно, и обратитесь к администратору @Aleksei_Li_Radievich"
-            )
+# --- БЛОК 4: ДЕКОРАТОР ДЛЯ ПРОВЕРКИ АДМИНА ---
+def admin_only(func):
+    @wraps(func)
+    async def wrapped(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        user = update.effective_user
+        if not user or not user.username:
+            await update.message.reply_text("Для использования админ-команд у вас должен быть установлен логин (username) в Telegram.")
             return
+        try:
+            response = supabase.table('persinfo').select(PERSINFO_TABLE_DOLG_COLUMN).eq(PERSINFO_TABLE_TG_USERNAME_COLUMN, user.username).single().execute()
+            if response.data and response.data.get(PERSINFO_TABLE_DOLG_COLUMN) == "Админ":
+                return await func(update, context, *args, **kwargs)
+            else:
+                await update.message.reply_text("У вас нет прав для выполнения этой команды.")
+                return
+        except Exception as e:
+            logger.error(f"Ошибка при проверке прав администратора для {user.username}: {e}")
+            await update.message.reply_text("Произошла ошибка при проверке прав доступа.")
+            return
+    return wrapped
 
-        # 3. Если найден, формируем сообщение с подтверждением
-        employee_data = response.data[0]
-        full_name = employee_data.get('full_name', 'Имя не найдено')
-        city = employee_data.get('city', 'Город не найден')
-        team = employee_data.get('team', 'Команда не найдена')
-        
-        # Сохраняем данные в контекст для последующего использования
-        context.user_data['employee_info'] = employee_data
-
-        text = f"Здравствуйте, {full_name}! Вы из города {city}, Команда {team}, верно?"
-        
-        keyboard = [
-            [
-                InlineKeyboardButton("Да, всё верно", callback_data="auth_yes"),
-                InlineKeyboardButton("Нет, не верно", callback_data="auth_no"),
-            ]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(text, reply_markup=reply_markup)
-
+# --- БЛОК 5: ОСНОВНЫЕ ФУНКЦИИ ДЛЯ ПОЛЬЗОВАТЕЛЕЙ ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    if not user.username:
+        await update.message.reply_text("Для авторизации в системе, пожалуйста, установите себе логин (username) в настройках Telegram.")
+        return
+    logger.info(f"Пользователь {user.username} (ID: {user.id}) нажал /start.")
+    try:
+        supabase.table('users').insert({USERS_TABLE_TG_ID_COLUMN: user.id, USERS_TABLE_TG_USERNAME_COLUMN: user.username}).execute()
+    except Exception:
+        pass
+    try:
+        select_query = f"{PERSINFO_TABLE_FULL_NAME_COLUMN}, {PERSINFO_TABLE_CITY_COLUMN}, {PERSINFO_TABLE_TEAM_COLUMN}, {PERSINFO_TABLE_DOLG_COLUMN}"
+        response = supabase.table('persinfo').select(select_query).eq(PERSINFO_TABLE_TG_USERNAME_COLUMN, user.username).single().execute()
+        if not response.data:
+            await update.message.reply_text("Здравствуйте! Я не смог найти вас в базе сотрудников. Обратитесь к администратору.")
+            return
+        full_name = response.data.get(PERSINFO_TABLE_FULL_NAME_COLUMN, 'N/A')
+        city = response.data.get(PERSINFO_TABLE_CITY_COLUMN, 'N/A')
+        team = response.data.get(PERSINFO_TABLE_TEAM_COLUMN, 'N/A')
+        dolg = response.data.get(PERSINFO_TABLE_DOLG_COLUMN, 'N/A')
+        text = f"Здравствуйте, {full_name}! Вы {dolg} из {team}, из города {city}, верно?"
+        keyboard = [[InlineKeyboardButton("Да, всё верно", callback_data="auth_yes"), InlineKeyboardButton("Нет, не верно", callback_data="auth_no")]]
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     except Exception as e:
         logger.error(f"Ошибка при поиске пользователя в 'persinfo': {e}")
-        await update.message.reply_text("Произошла внутренняя ошибка. Пожалуйста, попробуйте позже или свяжитесь с администратором.")
+        await update.message.reply_text("Произошла внутренняя ошибка.")
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Обрабатывает нажатия на inline-кнопки.
-    """
     query = update.callback_query
-    await query.answer() # Обязательно, чтобы убрать "часики" с кнопки
-
+    await query.answer()
     if query.data == "auth_yes":
-        # Если пользователь подтвердил свои данные, отправляем приветственное сообщение
-        await query.edit_message_text(text="Отлично! Рад знакомству.")
-        await send_welcome_and_menu(update, context)
-    
+        await query.edit_message_text(text="Авторизация прошла успешно. Загружаю меню...")
+        await send_welcome_message_with_menu(update, context)
     elif query.data == "auth_no":
-        # Если пользователь не подтвердил данные
-        await query.edit_message_text(text="Хм, странно. Пожалуйста, напишите администратору @Aleksei_Li_Radievich")
+        await query.edit_message_text(text="Не удивительно, я еще обучаюсь. Пожалуйста, напишите администратору @Aleksei_Li_Radievich")
 
-async def send_welcome_and_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Отправляет приветственное сообщение и основное меню.
-    Это ваш старый обработчик /start.
-    """
-    # Используем update.effective_chat.id, так как после кнопки update.message будет None
+async def send_welcome_message_with_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
-    
-    welcome_text = (
-        "Привет! 👋\n\nЯ - твой персональный консьерж🤵. Чтобы открыть меню с основными функциями, нажми на кнопку 🪄 Меню или отправь в чат команду /menu\n\n"
-        "✨Чтобы получить шаблон для отправки отчета введи \n"
-        "/breakfast , /lunch или /dinner 🥨\n\n"
-        "✨Я буду передавать для тебя важные сообщения, так что не забудь включить уведомления 🔔\n\n"
-        "✨Также я помогу тебе просматривать свои показатели, буду давать тебе советы, помогу с отработкой возражений 📒\n\n"
-        "✨А если ты захочешь предоставить обратную связь - я обязательно передам ее администратору ✍️\n\n"
-        "Хорошего дня!☀️"
-    )
-    await context.bot.send_message(chat_id=chat_id, text=welcome_text)
-    # Можно сразу же отправить и меню
-    await menu(update, context)
-
-
-# --- ВАШИ СТАРЫЕ ФУНКЦИИ (остаются без изменений) ---
-
-async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     keyboard = [
-        [InlineKeyboardButton("Дашборд", web_app={"url": URL_DASHBOARD})],
-        [InlineKeyboardButton("Отработка возражений", web_app={"url": URL_ALMANAC})],
-        [InlineKeyboardButton("База знаний", web_app={"url": URL_KNOWLEDGE_BASE})],
-        [InlineKeyboardButton("Отзывы и предложения", web_app={"url": URL_OTZIV})]
+        [InlineKeyboardButton("Дашборд", web_app=WebAppInfo(url=URL_DASHBOARD))],
+        [InlineKeyboardButton("Отработка возражений", web_app=WebAppInfo(url=URL_ALMANAC))],
+        [InlineKeyboardButton("База знаний", web_app=WebAppInfo(url=URL_KNOWLEDGE_BASE))],
+        [InlineKeyboardButton("Отзывы и предложения", web_app=WebAppInfo(url=URL_OTZIV))]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.effective_chat.send_message( # Используем effective_chat для универсальности
-        "Консьерж на связи. 🤵\n\nВыбирай, что хочешь узнать или сделать:\n\n"
-        "✨ Дашборд — вся важная информация у тебя под рукой.\n"
-        "✨ Отработка возражений — лайфхаки и рекомендации.\n"
-        "✨ База знаний — полезные статьи и советы.\n"
-        "✨ Отзывы и предложения — поделись обратной связью!\n"
-        "✨ Команды для отчетов: /breakfast /lunch /dinner\n",
-        reply_markup=reply_markup
+    # ИЗМЕНЕНО: Текст приветственного сообщения
+    welcome_text = (
+        "Твой персональный Консьерж на связи. 🤵\n\n"
+        "Выбирай, что хочешь узнать или сделать:\n\n"
+        "✨ Дашборд — вся важная информация у тебя под рукой 📊\n"
+        "✨ Отработка возражений — шаблоны и рекомендации ⛔️\n"
+        "✨ База знаний — полезные статьи и советы 📒\n"
+        "✨ Отзывы и предложения — поделись обратной связью ✍️\n"
+        "✨ Команды для отчетов: /breakfast /lunch /dinner 🥨\n"
+        "✨ Не забудь включить уведомления для сообщений 🔔"
     )
+    await context.bot.send_message(chat_id=chat_id, text=welcome_text, reply_markup=reply_markup)
 
-# ... (здесь ваши функции breakfast, lunch, dinner, admin - я их убрал для краткости, просто скопируйте их из вашего старого кода) ...
+async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await send_welcome_message_with_menu(update, context)
+
 async def breakfast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Отправляет шаблон для завтрака."""
     breakfast_text = (
         "Не забудь скорректировать данные на свои!\n\n\n"
         "ПЛАН 26.06.2025\n\n"
@@ -162,14 +137,13 @@ async def breakfast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(breakfast_text, parse_mode='HTML')
 
 async def lunch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Отправляет шаблон для обеда."""
     lunch_text = (
         "Не забудь скорректировать данные на свои!\n\n\n"
         "ПРЕДВАРИТЕЛЬНЫЙ ОТЧЁТ 26.06.2025\n\n"
         "Лиды: 10\n"
         "Трафик: 01:54:39\n"
         "КЗ: 172\n\n"
-        "#<b>ИмяФамилия</b>\n"
+        "<b>#ИмяФамилия</b>\n"
         "#Алексей\n"
         "@Aleksei_Li_Radievich\n"
         "@Логин тимлида в ТГ (если есть)"
@@ -177,7 +151,6 @@ async def lunch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(lunch_text, parse_mode='HTML')
 
 async def dinner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Отправляет шаблон для ужина."""
     dinner_text = (
         "Не забудь скорректировать данные на свои!\n\n\n"
         "ОТЧЁТ 26.06.2025\n\n"
@@ -194,32 +167,133 @@ async def dinner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     await update.message.reply_text(dinner_text, parse_mode='HTML')
 
-async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Отправляет подсказку по командам."""
-    admin_hint_text = (
-        "<b>⚙️ Подсказка по командам</b>\n\n"
-        "• /start - приветствие\n"
-        "• /menu - основное меню с кнопками\n"
-        "• /breakfast - шаблон утреннего отчета\n"
-        "• /lunch - шаблон дневного отчета\n"
-        "• /dinner - шаблон вечернего отчета\n"
+# --- БЛОК 6: АДМИНИСТРАТОРСКИЕ ФУНКЦИИ ---
+@admin_only
+async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    admin_text = (
+        "Команды администратора:\n"
+        "/stats - количество людей в БД\n"
+        "/broadcast <текст> - отправить сообщение всем в БД\n"
+        "/broadcast_team <команда> <текст> - отправить сообщение всей указанной команде\n"
+        "/broadcast_city <город> <текст> - отправить сообщение всем в указанном городе\n"
+        "/broadcast_dolg <должность> <текст> - отправить сообщение всем указанной должности"
     )
-    await update.message.reply_text(admin_hint_text, parse_mode='HTML')
+    await update.message.reply_text(admin_text)
 
+@admin_only
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        response = supabase.table('users').select('*', count='exact').execute()
+        await update.message.reply_text(f"📊 Всего пользователей в базе данных: {response.count}")
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка при получении статистики: {e}")
 
+async def _do_broadcast(target_ids, message_text, update, context):
+    """Вспомогательная функция для отправки сообщений."""
+    sent_count = 0
+    for user_id in target_ids:
+        try:
+            await context.bot.send_message(chat_id=user_id, text=message_text)
+            sent_count += 1
+            time.sleep(0.1)
+        except Exception as e:
+            logger.error(f"Не удалось отправить сообщение пользователю {user_id}: {e}")
+    return sent_count
+
+@admin_only
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message_text = " ".join(context.args)
+    if not message_text:
+        await update.message.reply_text("Использование: /broadcast <текст для всех>")
+        return
+    try:
+        response = supabase.table('users').select(USERS_TABLE_TG_ID_COLUMN).execute()
+        user_ids = [user[USERS_TABLE_TG_ID_COLUMN] for user in response.data]
+        await update.message.reply_text(f"Начинаю рассылку для {len(user_ids)} пользователей...")
+        sent_count = await _do_broadcast(user_ids, message_text, update, context)
+        await update.message.reply_text(f"✅ Рассылка завершена. Отправлено: {sent_count}/{len(user_ids)}")
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка при рассылке: {e}")
+
+async def _get_users_by_filter(filter_column, filter_value):
+    """Вспомогательная функция для поиска ID пользователей по фильтру в persinfo."""
+    persinfo_resp = supabase.table('persinfo').select(PERSINFO_TABLE_TG_USERNAME_COLUMN).eq(filter_column, filter_value).execute()
+    usernames = [user[PERSINFO_TABLE_TG_USERNAME_COLUMN] for user in persinfo_resp.data]
+    if not usernames:
+        return None
+    users_resp = supabase.table('users').select(USERS_TABLE_TG_ID_COLUMN).in_(USERS_TABLE_TG_USERNAME_COLUMN, usernames).execute()
+    return [user[USERS_TABLE_TG_ID_COLUMN] for user in users_resp.data]
+
+@admin_only
+async def broadcast_team(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if len(context.args) < 2:
+        await update.message.reply_text("Использование: /broadcast_team <Команда> <текст>")
+        return
+    team_name, message_text = context.args[0], " ".join(context.args[1:])
+    try:
+        user_ids = await _get_users_by_filter(PERSINFO_TABLE_TEAM_COLUMN, team_name)
+        if user_ids is None:
+            await update.message.reply_text(f"Не найдено сотрудников в команде '{team_name}'.")
+            return
+        await update.message.reply_text(f"Начинаю рассылку для команды '{team_name}' ({len(user_ids)} пользователей)...")
+        sent_count = await _do_broadcast(user_ids, message_text, update, context)
+        await update.message.reply_text(f"✅ Рассылка для команды '{team_name}' завершена. Отправлено: {sent_count}/{len(user_ids)}")
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка при рассылке по команде: {e}")
+
+@admin_only
+async def broadcast_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # ВОЗВРАЩЕННАЯ КОМАНДА
+    if len(context.args) < 2:
+        await update.message.reply_text("Использование: /broadcast_city <Город> <текст>")
+        return
+    city_name, message_text = context.args[0], " ".join(context.args[1:])
+    try:
+        user_ids = await _get_users_by_filter(PERSINFO_TABLE_CITY_COLUMN, city_name)
+        if user_ids is None:
+            await update.message.reply_text(f"Не найдено сотрудников из города '{city_name}'.")
+            return
+        await update.message.reply_text(f"Начинаю рассылку для города '{city_name}' ({len(user_ids)} пользователей)...")
+        sent_count = await _do_broadcast(user_ids, message_text, update, context)
+        await update.message.reply_text(f"✅ Рассылка для города '{city_name}' завершена. Отправлено: {sent_count}/{len(user_ids)}")
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка при рассылке по городу: {e}")
+
+@admin_only
+async def broadcast_dolg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if len(context.args) < 2:
+        await update.message.reply_text("Использование: /broadcast_dolg <Должность> <текст>")
+        return
+    dolg_name, message_text = context.args[0], " ".join(context.args[1:])
+    try:
+        user_ids = await _get_users_by_filter(PERSINFO_TABLE_DOLG_COLUMN, dolg_name)
+        if user_ids is None:
+            await update.message.reply_text(f"Не найдено сотрудников с должностью '{dolg_name}'.")
+            return
+        await update.message.reply_text(f"Начинаю рассылку для должности '{dolg_name}' ({len(user_ids)} пользователей)...")
+        sent_count = await _do_broadcast(user_ids, message_text, update, context)
+        await update.message.reply_text(f"✅ Рассылка для должности '{dolg_name}' завершена. Отправлено: {sent_count}/{len(user_ids)}")
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка при рассылке по должности: {e}")
+
+# --- БЛОК 7: ОСНОВНАЯ ФУНКЦИЯ ЗАПУСКА И РЕГИСТРАЦИЯ КОМАНД ---
 def main() -> None:
-    """Основная функция для запуска бота."""
     application = Application.builder().token(BOT_TOKEN).build()
 
-    # --- РЕГИСТРАЦИЯ ОБРАБОТЧИКОВ ---
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(button_callback)) # Новый обработчик кнопок
+    application.add_handler(CallbackQueryHandler(button_callback))
     application.add_handler(CommandHandler("menu", menu))
     application.add_handler(CommandHandler("breakfast", breakfast))
     application.add_handler(CommandHandler("lunch", lunch))
     application.add_handler(CommandHandler("dinner", dinner))
-    application.add_handler(CommandHandler("admin", admin))
-    
+
+    application.add_handler(CommandHandler("admin", admin_help))
+    application.add_handler(CommandHandler("stats", stats))
+    application.add_handler(CommandHandler("broadcast", broadcast))
+    application.add_handler(CommandHandler("broadcast_team", broadcast_team))
+    application.add_handler(CommandHandler("broadcast_city", broadcast_city)) # ВОЗВРАЩЕНА РЕГИСТРАЦИЯ
+    application.add_handler(CommandHandler("broadcast_dolg", broadcast_dolg))
+
     print("Бот успешно запущен...")
     application.run_polling()
 
