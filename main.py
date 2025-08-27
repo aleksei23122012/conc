@@ -283,9 +283,113 @@ async def dinner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Произошла ошибка при формировании отчета.")
 
 
-# --- БЛОК 6: АДМИНИСТРАТОРСКИЕ ФУНКЦИИ (без изменений) ---
-# ... (все функции от admin_help до broadcast_dolg остаются такими же, как в прошлой версии) ...
+# --- БЛОК 6: АДМИНИСТРАТОРСКИЕ ФУНКЦИИ ---
+@admin_only
+async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    admin_text = (
+        "Команды администратора:\n"
+        "/stats - количество людей в БД\n"
+        "/broadcast <текст> - отправить сообщение всем в БД\n"
+        "/broadcast_team <команда> <текст> - отправить сообщение всей указанной команде\n"
+        "/broadcast_city <город> <текст> - отправить сообщение всем в указанном городе\n"
+        "/broadcast_dolg <должность> <текст> - отправить сообщение всем указанной должности"
+    )
+    await update.message.reply_text(admin_text)
 
+@admin_only
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        response = supabase.table('users').select('*', count='exact').execute()
+        await update.message.reply_text(f"📊 Всего пользователей в базе данных: {response.count}")
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка при получении статистики: {e}")
+
+async def _do_broadcast(target_ids, message_text, update, context):
+    """Вспомогательная функция для отправки сообщений."""
+    sent_count = 0
+    for user_id in target_ids:
+        try:
+            await context.bot.send_message(chat_id=user_id, text=message_text)
+            sent_count += 1
+            time.sleep(0.1)
+        except Exception as e:
+            logger.error(f"Не удалось отправить сообщение пользователю {user_id}: {e}")
+    return sent_count
+
+@admin_only
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message_text = " ".join(context.args)
+    if not message_text:
+        await update.message.reply_text("Использование: /broadcast <текст для всех>")
+        return
+    try:
+        response = supabase.table('users').select(USERS_TABLE_TG_ID_COLUMN).execute()
+        user_ids = [user[USERS_TABLE_TG_ID_COLUMN] for user in response.data]
+        await update.message.reply_text(f"Начинаю рассылку для {len(user_ids)} пользователей...")
+        sent_count = await _do_broadcast(user_ids, message_text, update, context)
+        await update.message.reply_text(f"✅ Рассылка завершена. Отправлено: {sent_count}/{len(user_ids)}")
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка при рассылке: {e}")
+
+async def _get_users_by_filter(filter_column, filter_value):
+    """Вспомогательная функция для поиска ID пользователей по фильтру в persinfo."""
+    persinfo_resp = supabase.table('persinfo').select(PERSINFO_TABLE_TG_USERNAME_COLUMN).eq(filter_column, filter_value).execute()
+    usernames = [user[PERSINFO_TABLE_TG_USERNAME_COLUMN] for user in persinfo_resp.data]
+    if not usernames:
+        return None
+    users_resp = supabase.table('users').select(USERS_TABLE_TG_ID_COLUMN).in_(USERS_TABLE_TG_USERNAME_COLUMN, usernames).execute()
+    return [user[USERS_TABLE_TG_ID_COLUMN] for user in users_resp.data]
+
+@admin_only
+async def broadcast_team(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if len(context.args) < 2:
+        await update.message.reply_text("Использование: /broadcast_team <Команда> <текст>")
+        return
+    team_name, message_text = context.args[0], " ".join(context.args[1:])
+    try:
+        user_ids = await _get_users_by_filter(PERSINFO_TABLE_TEAM_COLUMN, team_name)
+        if user_ids is None:
+            await update.message.reply_text(f"Не найдено сотрудников в команде '{team_name}'.")
+            return
+        await update.message.reply_text(f"Начинаю рассылку для команды '{team_name}' ({len(user_ids)} пользователей)...")
+        sent_count = await _do_broadcast(user_ids, message_text, update, context)
+        await update.message.reply_text(f"✅ Рассылка для команды '{team_name}' завершена. Отправлено: {sent_count}/{len(user_ids)}")
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка при рассылке по команде: {e}")
+
+@admin_only
+async def broadcast_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if len(context.args) < 2:
+        await update.message.reply_text("Использование: /broadcast_city <Город> <текст>")
+        return
+    city_name, message_text = context.args[0], " ".join(context.args[1:])
+    try:
+        user_ids = await _get_users_by_filter(PERSINFO_TABLE_CITY_COLUMN, city_name)
+        if user_ids is None:
+            await update.message.reply_text(f"Не найдено сотрудников из города '{city_name}'.")
+            return
+        await update.message.reply_text(f"Начинаю рассылку для города '{city_name}' ({len(user_ids)} пользователей)...")
+        sent_count = await _do_broadcast(user_ids, message_text, update, context)
+        await update.message.reply_text(f"✅ Рассылка для города '{city_name}' завершена. Отправлено: {sent_count}/{len(user_ids)}")
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка при рассылке по городу: {e}")
+
+@admin_only
+async def broadcast_dolg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if len(context.args) < 2:
+        await update.message.reply_text("Использование: /broadcast_dolg <Должность> <текст>")
+        return
+    dolg_name, message_text = context.args[0], " ".join(context.args[1:])
+    try:
+        user_ids = await _get_users_by_filter(PERSINFO_TABLE_DOLG_COLUMN, dolg_name)
+        if user_ids is None:
+            await update.message.reply_text(f"Не найдено сотрудников с должностью '{dolg_name}'.")
+            return
+        await update.message.reply_text(f"Начинаю рассылку для должности '{dolg_name}' ({len(user_ids)} пользователей)...")
+        sent_count = await _do_broadcast(user_ids, message_text, update, context)
+        await update.message.reply_text(f"✅ Рассылка для должности '{dolg_name}' завершена. Отправлено: {sent_count}/{len(user_ids)}")
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка при рассылке по должности: {e}")
 
 # --- БЛОК 7: ОСНОВНАЯ ФУНКЦИЯ ЗАПУСКА И РЕГИСТРАЦИЯ КОМАНД (без изменений) ---
 def main() -> None:
