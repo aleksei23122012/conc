@@ -1,6 +1,7 @@
 import os
 import logging
 import time
+import re 
 from functools import wraps
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
@@ -41,7 +42,7 @@ TMDAY_TABLE_TRAFIC_COLUMN = 'trafic'
 TMDAY_TABLE_KZ_COLUMN = 'kz'
 
 CRMTABLE_TEAM_COLUMN = 'team'
-CRMTABLE_URL_COLUMN = 'url' # ИЗМЕНЕНО
+CRMTABLE_URL_COLUMN = 'url'
 TMMONTH_TABLE_TG_USERNAME_COLUMN = 'tg'
 TMMONTH_TABLE_COS_COLUMN = 'cos'
 TMMONTH_TABLE_MOLNII_COLUMN = 'molnii'
@@ -115,18 +116,27 @@ async def send_welcome_message_with_menu(update: Update, context: ContextTypes.D
     user = update.effective_user
     chat_id = update.effective_chat.id
     keyboard_layout = []
+    
     try:
         persinfo_resp = supabase.table('persinfo').select(PERSINFO_TABLE_TEAM_COLUMN).eq(PERSINFO_TABLE_TG_USERNAME_COLUMN, user.username).execute()
         if persinfo_resp.data:
-            user_team = persinfo_resp.data[0].get(PERSINFO_TABLE_TEAM_COLUMN)
-            if user_team:
-                crm_resp = supabase.table('crm').select(CRMTABLE_URL_COLUMN).eq(CRMTABLE_TEAM_COLUMN, user_team).execute()
-                if crm_resp.data:
-                    crm_url = crm_resp.data[0].get(CRMTABLE_URL_COLUMN)
-                    if crm_url:
-                        keyboard_layout.append([InlineKeyboardButton("CRM", url=crm_url)])
+            user_team_raw = persinfo_resp.data[0].get(PERSINFO_TABLE_TEAM_COLUMN)
+            if user_team_raw:
+                user_team_cleaned = re.sub(r'\s+', '', user_team_raw)
+                all_crm_teams_resp = supabase.table('crm').select(f"{CRMTABLE_TEAM_COLUMN}, {CRMTABLE_URL_COLUMN}").execute()
+                if all_crm_teams_resp.data:
+                    for crm_entry in all_crm_teams_resp.data:
+                        crm_team_raw = crm_entry.get(CRMTABLE_TEAM_COLUMN)
+                        if crm_team_raw:
+                            crm_team_cleaned = re.sub(r'\s+', '', crm_team_raw)
+                            if user_team_cleaned == crm_team_cleaned:
+                                crm_url = crm_entry.get(CRMTABLE_URL_COLUMN)
+                                if crm_url:
+                                    keyboard_layout.append([InlineKeyboardButton("CRM", url=crm_url)])
+                                    break
     except Exception as e:
         logger.error(f"Не удалось сформировать кнопку CRM для {user.username}: {e}")
+        
     keyboard_layout.extend([
         [InlineKeyboardButton("Дашборд", web_app=WebAppInfo(url=URL_DASHBOARD))],
         [InlineKeyboardButton("Отработка возражений", web_app=WebAppInfo(url=URL_ALMANAC))],
@@ -134,6 +144,7 @@ async def send_welcome_message_with_menu(update: Update, context: ContextTypes.D
         [InlineKeyboardButton("Геймификация", web_app=WebAppInfo(url=URL_GAMIFICATION))]
     ])
     reply_markup = InlineKeyboardMarkup(keyboard_layout)
+    
     welcome_text = (
         "Твой персональный Консьерж на связи. 🤵\n\n"
         "Выбирай, что хочешь узнать или сделать:\n\n"
