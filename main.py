@@ -26,7 +26,6 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # --- БЛОК 2: КОНФИГУРАЦИЯ НАЗВАНИЙ КОЛОНОК В SUPABASE ---
 USERS_TABLE_TG_ID_COLUMN = 'tg_id'
 USERS_TABLE_TG_USERNAME_COLUMN = 'tg'
-
 PERSINFO_TABLE_TG_USERNAME_COLUMN = 'tg'
 PERSINFO_TABLE_FULL_NAME_COLUMN = 'operator'
 PERSINFO_TABLE_CITY_COLUMN = 'city'
@@ -41,12 +40,18 @@ TMDAY_TABLE_LID_COLUMN = 'lid'
 TMDAY_TABLE_TRAFIC_COLUMN = 'trafic'
 TMDAY_TABLE_KZ_COLUMN = 'kz'
 
+CRMTABLE_TEAM_COLUMN = 'team'
+CRMTABLE_IDCRM_COLUMN = 'idcrm'
+TMMONTH_TABLE_TG_USERNAME_COLUMN = 'tg'
+TMMONTH_TABLE_COS_COLUMN = 'cos'
+TMMONTH_TABLE_MOLNII_COLUMN = 'molnii'
+
 # --- БЛОК 3: URL ДЛЯ WEB APPS И ССЫЛОК ---
 URL_KNOWLEDGE_BASE = "https://aleksei23122012.teamly.ru/space/00647e86-cd4b-46ef-9903-0af63964ad43/article/17e16e2a-92ff-463c-8bf4-eaaf202c0bc7"
 URL_DASHBOARD = "https://aleksei23122012.github.io/DMdashbordbot/conc/conc.html"
 URL_ALMANAC = "https://aleksei23122012.github.io/DMdashbordbot/ov/ov.html"
-URL_OTZIV = "https://forms.gle/KML4YXA4osd6aaWS7"
-URL_GAMIFICATION = "https://marketing-house-appp.vercel.app/" # ИЗМЕНЕНА ССЫЛКА
+URL_YUMMY_FORM = "https://forms.gle/KML4YXA4osd6aaWS7"
+URL_GAMIFICATION = "https://marketing-house-appp.vercel.app/"
 
 # --- БЛОК 4: ДЕКОРАТОР ДЛЯ ПРОВЕРКИ АДМИНА ---
 def admin_only(func):
@@ -109,21 +114,34 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def send_welcome_message_with_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     chat_id = update.effective_chat.id
-    keyboard = [
+    keyboard_layout = []
+    try:
+        persinfo_resp = supabase.table('persinfo').select(PERSINFO_TABLE_TEAM_COLUMN).eq(PERSINFO_TABLE_TG_USERNAME_COLUMN, user.username).single().execute()
+        if persinfo_resp.data:
+            user_team = persinfo_resp.data.get(PERSINFO_TABLE_TEAM_COLUMN)
+            crm_resp = supabase.table('crm').select(CRMTABLE_IDCRM_COLUMN).eq(CRMTABLE_TEAM_COLUMN, user_team).single().execute()
+            if crm_resp.data:
+                idcrm = crm_resp.data.get(CRMTABLE_IDCRM_COLUMN)
+                crm_url = f"https://docs.google.com/spreadsheets/d/{idcrm}/edit?gid=0#gid=0"
+                keyboard_layout.append([InlineKeyboardButton("CRM", url=crm_url)])
+    except Exception as e:
+        logger.error(f"Не удалось сформировать кнопку CRM для {user.username}: {e}")
+    keyboard_layout.extend([
         [InlineKeyboardButton("Дашборд", web_app=WebAppInfo(url=URL_DASHBOARD))],
         [InlineKeyboardButton("Отработка возражений", web_app=WebAppInfo(url=URL_ALMANAC))],
         [InlineKeyboardButton("База знаний", url=URL_KNOWLEDGE_BASE)],
-        [InlineKeyboardButton("Геймификация", web_app=WebAppInfo(url=URL_GAMIFICATION))],
-        [InlineKeyboardButton("Отзывы и предложения", web_app=WebAppInfo(url=URL_OTZIV))]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+        [InlineKeyboardButton("Геймификация", web_app=WebAppInfo(url=URL_GAMIFICATION))]
+    ])
+    reply_markup = InlineKeyboardMarkup(keyboard_layout)
     welcome_text = (
         "Твой персональный Консьерж на связи. 🤵\n\n"
         "Выбирай, что хочешь узнать или сделать:\n\n"
+        "✨ CRM - ссылка на CRM вашей команды 💼\n"
         "✨ Дашборд — вся важная информация у тебя под рукой 📊\n"
         "✨ Отработка возражений — шаблоны и рекомендации ⛔️\n"
         "✨ База знаний — полезные статьи и советы 📒\n"
-        "✨ Отзывы и предложения — поделись обратной связью ✍️\n"
+        "✨ Узнать свои КОСы и молнии: /cos ⚖️\n"
+        "✨ Отзывы и предложения: /yummy ✍️\n"
         "✨ Команды для отчетов: /breakfast /lunch /dinner 🥨\n"
         "✨ Не забудь включить уведомления для сообщений 🔔"
     )
@@ -252,6 +270,29 @@ async def dinner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.error(f"Ошибка в /dinner для {user.username}: {e}")
         await update.message.reply_text("Произошла ошибка при формировании отчета.")
 
+async def yummy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = f'Вы можете передать пожелания шеф-повару по <a href="{URL_YUMMY_FORM}">ссылке</a> 📋'
+    await update.message.reply_text(text, parse_mode='HTML')
+
+async def cos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    if not user.username:
+        await update.message.reply_text("Не могу найти ваш username.")
+        return
+    try:
+        select_query = f"{TMMONTH_TABLE_COS_COLUMN}, {TMMONTH_TABLE_MOLNII_COLUMN}"
+        response = supabase.table('TMmonth').select(select_query).eq(TMMONTH_TABLE_TG_USERNAME_COLUMN, user.username).single().execute()
+        if not response.data:
+            await update.message.reply_text("К сожалению, не нашел ваших данных по КОСам и молниям за этот месяц.")
+            return
+        cos_count = response.data.get(TMMONTH_TABLE_COS_COLUMN, 0)
+        molnii_count = response.data.get(TMMONTH_TABLE_MOLNII_COLUMN, 0)
+        text = f"У вас {cos_count} косов 👎 и {molnii_count} молний ⚡️"
+        await update.message.reply_text(text)
+    except Exception as e:
+        logger.error(f"Ошибка в /cos для {user.username}: {e}")
+        await update.message.reply_text("Произошла ошибка при получении данных.")
+
 # --- БЛОК 6: АДМИНИСТРАТОРСКИЕ ФУНКЦИИ ---
 @admin_only
 async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -368,6 +409,8 @@ def main() -> None:
     application.add_handler(CommandHandler("breakfast", breakfast))
     application.add_handler(CommandHandler("lunch", lunch))
     application.add_handler(CommandHandler("dinner", dinner))
+    application.add_handler(CommandHandler("yummy", yummy))
+    application.add_handler(CommandHandler("cos", cos))
     
     application.add_handler(CommandHandler("admin", admin_help))
     application.add_handler(CommandHandler("stats", stats))
