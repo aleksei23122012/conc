@@ -1,7 +1,6 @@
 import os
 import logging
 import time
-import re 
 from functools import wraps
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
@@ -35,14 +34,13 @@ PERSINFO_TABLE_DOLG_COLUMN = 'dolg'
 PERSINFO_TABLE_PLAN_LID_COLUMN = 'plan_lid'
 PERSINFO_TABLE_RGTM_COLUMN = 'tg_rgtm'
 PERSINFO_TABLE_TEAMLEAD_COLUMN = 'tg_teamlid'
+PERSINFO_TABLE_URL_COLUMN = 'url' # <-- НОВАЯ КОЛОНКА
 
 TMDAY_TABLE_TG_USERNAME_COLUMN = 'tg'
 TMDAY_TABLE_LID_COLUMN = 'lid'
 TMDAY_TABLE_TRAFIC_COLUMN = 'trafic'
 TMDAY_TABLE_KZ_COLUMN = 'kz'
 
-CRMTABLE_TEAM_COLUMN = 'team'
-CRMTABLE_URL_COLUMN = 'url'
 TMMONTH_TABLE_TG_USERNAME_COLUMN = 'tg'
 TMMONTH_TABLE_COS_COLUMN = 'cos'
 TMMONTH_TABLE_MOLNII_COLUMN = 'molnii'
@@ -118,22 +116,11 @@ async def send_welcome_message_with_menu(update: Update, context: ContextTypes.D
     keyboard_layout = []
     
     try:
-        persinfo_resp = supabase.table('persinfo').select(PERSINFO_TABLE_TEAM_COLUMN).eq(PERSINFO_TABLE_TG_USERNAME_COLUMN, user.username).execute()
-        if persinfo_resp.data:
-            user_team_raw = persinfo_resp.data[0].get(PERSINFO_TABLE_TEAM_COLUMN)
-            if user_team_raw:
-                user_team_cleaned = re.sub(r'\s+', '', user_team_raw)
-                all_crm_teams_resp = supabase.table('crm').select(f"{CRMTABLE_TEAM_COLUMN}, {CRMTABLE_URL_COLUMN}").execute()
-                if all_crm_teams_resp.data:
-                    for crm_entry in all_crm_teams_resp.data:
-                        crm_team_raw = crm_entry.get(CRMTABLE_TEAM_COLUMN)
-                        if crm_team_raw:
-                            crm_team_cleaned = re.sub(r'\s+', '', crm_team_raw)
-                            if user_team_cleaned == crm_team_cleaned:
-                                crm_url = crm_entry.get(CRMTABLE_URL_COLUMN)
-                                if crm_url:
-                                    keyboard_layout.append([InlineKeyboardButton("CRM", url=crm_url)])
-                                    break
+        response = supabase.table('persinfo').select(PERSINFO_TABLE_URL_COLUMN).eq(PERSINFO_TABLE_TG_USERNAME_COLUMN, user.username).execute()
+        if response.data:
+            crm_url = response.data[0].get(PERSINFO_TABLE_URL_COLUMN)
+            if crm_url:
+                keyboard_layout.append([InlineKeyboardButton("CRM", url=crm_url)])
     except Exception as e:
         logger.error(f"Не удалось сформировать кнопку CRM для {user.username}: {e}")
         
