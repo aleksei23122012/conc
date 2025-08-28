@@ -121,9 +121,11 @@ async def send_welcome_message_with_menu(update: Update, context: ContextTypes.D
             user_team = persinfo_resp.data.get(PERSINFO_TABLE_TEAM_COLUMN)
             crm_resp = supabase.table('crm').select(CRMTABLE_IDCRM_COLUMN).eq(CRMTABLE_TEAM_COLUMN, user_team).single().execute()
             if crm_resp.data:
+                # ВОТ ЗДЕСЬ БЫЛО ИСПРАВЛЕНИЕ
                 idcrm = crm_resp.data.get(CRMTABLE_IDCRM_COLUMN)
-                crm_url = f"https://docs.google.com/spreadsheets/d/{idcrm}/edit?gid=0#gid=0"
-                keyboard_layout.append([InlineKeyboardButton("CRM", url=crm_url)])
+                if idcrm: # Дополнительная проверка, что idcrm не пустой
+                    crm_url = f"https://docs.google.com/spreadsheets/d/{idcrm}/edit?gid=0#gid=0"
+                    keyboard_layout.append([InlineKeyboardButton("CRM", url=crm_url)])
     except Exception as e:
         logger.error(f"Не удалось сформировать кнопку CRM для {user.username}: {e}")
     keyboard_layout.extend([
