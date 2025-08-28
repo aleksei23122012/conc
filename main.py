@@ -47,7 +47,7 @@ TMMONTH_TABLE_COS_COLUMN = 'cos'
 TMMONTH_TABLE_MOLNII_COLUMN = 'molnii'
 
 # --- БЛОК 3: URL ДЛЯ WEB APPS И ССЫЛОК ---
-URL_KNOWLEDGE_BASE = "https://aleksei23122012.teamly.ru/space/00647e86-cd4b-46ef-9903-0af63964ad43/article/17e16e2a-92ff-463c-8bf4-eaaf202c0bc7"
+URL_KNOWLEDGE_BASE = "https.py"
 URL_DASHBOARD = "https://aleksei23122012.github.io/DMdashbordbot/conc/conc.html"
 URL_ALMANAC = "https://aleksei23122012.github.io/DMdashbordbot/ov/ov.html"
 URL_YUMMY_FORM = "https://forms.gle/KML4YXA4osd6aaWS7"
@@ -110,31 +110,36 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await send_welcome_message_with_menu(update, context)
     elif query.data == "auth_no":
         await query.edit_message_text(text="Не удивительно, я еще обучаюсь. Пожалуйста, напишите администратору @mikiooshi")
+    elif query.data == "get_crm_link":
+        user = update.effective_user
+        try:
+            persinfo_resp = supabase.table('persinfo').select(PERSINFO_TABLE_TEAM_COLUMN).eq(PERSINFO_TABLE_TG_USERNAME_COLUMN, user.username).single().execute()
+            if persinfo_resp.data:
+                user_team = persinfo_resp.data.get(PERSINFO_TABLE_TEAM_COLUMN)
+                if user_team:
+                    crm_resp = supabase.table('crm').select(CRMTABLE_IDCRM_COLUMN).eq(CRMTABLE_TEAM_COLUMN, user_team).single().execute()
+                    if crm_resp.data:
+                        idcrm = crm_resp.data.get(CRMTABLE_IDCRM_COLUMN)
+                        if idcrm:
+                            crm_url = f"https://docs.google.com/spreadsheets/d/{idcrm}/edit?gid=0#gid=0"
+                            await query.message.reply_text(f"Ваша ссылка на CRM:\n{crm_url}", disable_web_page_preview=True)
+                            return
+            await query.message.reply_text("Вашей CRM нет в базе.")
+        except Exception as e:
+            logger.error(f"Ошибка при обработке кнопки CRM для {user.username}: {e}")
+            await query.message.reply_text("Произошла ошибка при поиске CRM.")
 
 async def send_welcome_message_with_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     chat_id = update.effective_chat.id
-    keyboard_layout = []
-    try:
-        persinfo_resp = supabase.table('persinfo').select(PERSINFO_TABLE_TEAM_COLUMN).eq(PERSINFO_TABLE_TG_USERNAME_COLUMN, user.username).single().execute()
-        if persinfo_resp.data:
-            user_team = persinfo_resp.data.get(PERSINFO_TABLE_TEAM_COLUMN)
-            crm_resp = supabase.table('crm').select(CRMTABLE_IDCRM_COLUMN).eq(CRMTABLE_TEAM_COLUMN, user_team).single().execute()
-            if crm_resp.data:
-                # ВОТ ЗДЕСЬ БЫЛО ИСПРАВЛЕНИЕ
-                idcrm = crm_resp.data.get(CRMTABLE_IDCRM_COLUMN)
-                if idcrm: # Дополнительная проверка, что idcrm не пустой
-                    crm_url = f"https://docs.google.com/spreadsheets/d/{idcrm}/edit?gid=0#gid=0"
-                    keyboard_layout.append([InlineKeyboardButton("CRM", url=crm_url)])
-    except Exception as e:
-        logger.error(f"Не удалось сформировать кнопку CRM для {user.username}: {e}")
-    keyboard_layout.extend([
+    keyboard = [
+        [InlineKeyboardButton("CRM", callback_data="get_crm_link")],
         [InlineKeyboardButton("Дашборд", web_app=WebAppInfo(url=URL_DASHBOARD))],
         [InlineKeyboardButton("Отработка возражений", web_app=WebAppInfo(url=URL_ALMANAC))],
         [InlineKeyboardButton("База знаний", url=URL_KNOWLEDGE_BASE)],
         [InlineKeyboardButton("Геймификация", web_app=WebAppInfo(url=URL_GAMIFICATION))]
-    ])
-    reply_markup = InlineKeyboardMarkup(keyboard_layout)
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
     welcome_text = (
         "Твой персональный Консьерж на связи. 🤵\n\n"
         "Выбирай, что хочешь узнать или сделать:\n\n"
