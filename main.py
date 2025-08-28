@@ -47,7 +47,7 @@ TMMONTH_TABLE_COS_COLUMN = 'cos'
 TMMONTH_TABLE_MOLNII_COLUMN = 'molnii'
 
 # --- БЛОК 3: URL ДЛЯ WEB APPS И ССЫЛОК ---
-URL_KNOWLEDGE_BASE = "https.py"
+URL_KNOWLEDGE_BASE = "https://aleksei23122012.teamly.ru/space/00647e86-cd4b-46ef-9903-0af63964ad43/article/17e16e2a-92ff-463c-8bf4-eaaf202c0bc7"
 URL_DASHBOARD = "https://aleksei23122012.github.io/DMdashbordbot/conc/conc.html"
 URL_ALMANAC = "https://aleksei23122012.github.io/DMdashbordbot/ov/ov.html"
 URL_YUMMY_FORM = "https://forms.gle/KML4YXA4osd6aaWS7"
@@ -62,8 +62,8 @@ def admin_only(func):
             await update.message.reply_text("Для использования админ-команд у вас должен быть установлен логин (username) в Telegram.")
             return
         try:
-            response = supabase.table('persinfo').select(PERSINFO_TABLE_DOLG_COLUMN).eq(PERSINFO_TABLE_TG_USERNAME_COLUMN, user.username).single().execute()
-            if response.data and response.data.get(PERSINFO_TABLE_DOLG_COLUMN) == "Админ":
+            response = supabase.table('persinfo').select(PERSINFO_TABLE_DOLG_COLUMN).eq(PERSINFO_TABLE_TG_USERNAME_COLUMN, user.username).execute()
+            if response.data and response.data[0].get(PERSINFO_TABLE_DOLG_COLUMN) == "Админ":
                 return await func(update, context, *args, **kwargs)
             else:
                 await update.message.reply_text("У вас нет прав для выполнения этой команды.")
@@ -86,15 +86,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception:
         pass
     try:
-        select_query = f"{PERSINFO_TABLE_FULL_NAME_COLUMN}, {PERSINFO_TABLE_CITY_COLUMN}, {PERSINFO_TABLE_TEAM_COLUMN}, {PERSINFO_TABLE_DOLG_COLUMN}"
-        response = supabase.table('persinfo').select(select_query).eq(PERSINFO_TABLE_TG_USERNAME_COLUMN, user.username).single().execute()
+        response = supabase.table('persinfo').select(f"{PERSINFO_TABLE_FULL_NAME_COLUMN}, {PERSINFO_TABLE_CITY_COLUMN}, {PERSINFO_TABLE_TEAM_COLUMN}, {PERSINFO_TABLE_DOLG_COLUMN}").eq(PERSINFO_TABLE_TG_USERNAME_COLUMN, user.username).execute()
         if not response.data:
             await update.message.reply_text("Здравствуйте! Я не смог найти вас в базе сотрудников. Обратитесь к администратору.")
             return
-        full_name = response.data.get(PERSINFO_TABLE_FULL_NAME_COLUMN, 'N/A')
-        city = response.data.get(PERSINFO_TABLE_CITY_COLUMN, 'N/A')
-        team = response.data.get(PERSINFO_TABLE_TEAM_COLUMN, 'N/A')
-        dolg = response.data.get(PERSINFO_TABLE_DOLG_COLUMN, 'N/A')
+        data = response.data[0]
+        full_name = data.get(PERSINFO_TABLE_FULL_NAME_COLUMN, 'N/A')
+        city = data.get(PERSINFO_TABLE_CITY_COLUMN, 'N/A')
+        team = data.get(PERSINFO_TABLE_TEAM_COLUMN, 'N/A')
+        dolg = data.get(PERSINFO_TABLE_DOLG_COLUMN, 'N/A')
         text = f"Здравствуйте, {full_name}! ✋\nВы {dolg} из {team}, из города {city}, верно?"
         keyboard = [[InlineKeyboardButton("Да, всё верно", callback_data="auth_yes"), InlineKeyboardButton("Нет, не верно", callback_data="auth_no")]]
         await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
@@ -113,13 +113,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     elif query.data == "get_crm_link":
         user = update.effective_user
         try:
-            persinfo_resp = supabase.table('persinfo').select(PERSINFO_TABLE_TEAM_COLUMN).eq(PERSINFO_TABLE_TG_USERNAME_COLUMN, user.username).single().execute()
+            persinfo_resp = supabase.table('persinfo').select(PERSINFO_TABLE_TEAM_COLUMN).eq(PERSINFO_TABLE_TG_USERNAME_COLUMN, user.username).execute()
             if persinfo_resp.data:
-                user_team = persinfo_resp.data.get(PERSINFO_TABLE_TEAM_COLUMN)
+                user_team = persinfo_resp.data[0].get(PERSINFO_TABLE_TEAM_COLUMN)
                 if user_team:
-                    crm_resp = supabase.table('crm').select(CRMTABLE_IDCRM_COLUMN).eq(CRMTABLE_TEAM_COLUMN, user_team).single().execute()
+                    crm_resp = supabase.table('crm').select(CRMTABLE_IDCRM_COLUMN).eq(CRMTABLE_TEAM_COLUMN, user_team).execute()
                     if crm_resp.data:
-                        idcrm = crm_resp.data.get(CRMTABLE_IDCRM_COLUMN)
+                        idcrm = crm_resp.data[0].get(CRMTABLE_IDCRM_COLUMN)
                         if idcrm:
                             crm_url = f"https://docs.google.com/spreadsheets/d/{idcrm}/edit?gid=0#gid=0"
                             await query.message.reply_text(f"Ваша ссылка на CRM:\n{crm_url}", disable_web_page_preview=True)
@@ -153,8 +153,8 @@ async def send_welcome_message_with_menu(update: Update, context: ContextTypes.D
         "✨ Не забудь включить уведомления для сообщений 🔔"
     )
     try:
-        response = supabase.table('persinfo').select(PERSINFO_TABLE_DOLG_COLUMN).eq(PERSINFO_TABLE_TG_USERNAME_COLUMN, user.username).single().execute()
-        if response.data and response.data.get(PERSINFO_TABLE_DOLG_COLUMN) == "Админ":
+        response = supabase.table('persinfo').select(PERSINFO_TABLE_DOLG_COLUMN).eq(PERSINFO_TABLE_TG_USERNAME_COLUMN, user.username).execute()
+        if response.data and response.data[0].get(PERSINFO_TABLE_DOLG_COLUMN) == "Админ":
             welcome_text += "\n✨ Памятка по админским командам здесь /admin 🎮"
     except Exception as e:
         logger.warning(f"Не удалось проверить роль для пользователя {user.username}: {e}")
@@ -169,12 +169,11 @@ async def breakfast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Не могу найти ваш username, пожалуйста, установите его в настройках Telegram.")
         return
     try:
-        select_query = f"{PERSINFO_TABLE_FULL_NAME_COLUMN}, {PERSINFO_TABLE_TEAM_COLUMN}, {PERSINFO_TABLE_RGTM_COLUMN}, {PERSINFO_TABLE_TEAMLEAD_COLUMN}, {PERSINFO_TABLE_PLAN_LID_COLUMN}"
-        persinfo_response = supabase.table('persinfo').select(select_query).eq(PERSINFO_TABLE_TG_USERNAME_COLUMN, user.username).single().execute()
-        if not persinfo_response.data:
+        response = supabase.table('persinfo').select(f"{PERSINFO_TABLE_FULL_NAME_COLUMN}, {PERSINFO_TABLE_TEAM_COLUMN}, {PERSINFO_TABLE_RGTM_COLUMN}, {PERSINFO_TABLE_TEAMLEAD_COLUMN}, {PERSINFO_TABLE_PLAN_LID_COLUMN}").eq(PERSINFO_TABLE_TG_USERNAME_COLUMN, user.username).execute()
+        if not response.data:
             await update.message.reply_text("Не удалось найти ваши данные в базе сотрудников.")
             return
-        data = persinfo_response.data
+        data = response.data[0]
         current_date = datetime.now().strftime("%d.%m.%Y")
         plan_lid = data.get(PERSINFO_TABLE_PLAN_LID_COLUMN, 0)
         operator_name = data.get(PERSINFO_TABLE_FULL_NAME_COLUMN, "ИмяФамилия")
@@ -203,15 +202,13 @@ async def lunch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Не могу найти ваш username.")
         return
     try:
-        persinfo_select = f"{PERSINFO_TABLE_FULL_NAME_COLUMN}, {PERSINFO_TABLE_TEAM_COLUMN}, {PERSINFO_TABLE_RGTM_COLUMN}, {PERSINFO_TABLE_TEAMLEAD_COLUMN}"
-        persinfo_response = supabase.table('persinfo').select(persinfo_select).eq(PERSINFO_TABLE_TG_USERNAME_COLUMN, user.username).single().execute()
-        tmday_select = f"{TMDAY_TABLE_LID_COLUMN}, {TMDAY_TABLE_TRAFIC_COLUMN}, {TMDAY_TABLE_KZ_COLUMN}"
-        tmday_response = supabase.table('TMday').select(tmday_select).eq(TMDAY_TABLE_TG_USERNAME_COLUMN, user.username).single().execute()
+        persinfo_response = supabase.table('persinfo').select(f"{PERSINFO_TABLE_FULL_NAME_COLUMN}, {PERSINFO_TABLE_TEAM_COLUMN}, {PERSINFO_TABLE_RGTM_COLUMN}, {PERSINFO_TABLE_TEAMLEAD_COLUMN}").eq(PERSINFO_TABLE_TG_USERNAME_COLUMN, user.username).execute()
+        tmday_response = supabase.table('TMday').select(f"{TMDAY_TABLE_LID_COLUMN}, {TMDAY_TABLE_TRAFIC_COLUMN}, {TMDAY_TABLE_KZ_COLUMN}").eq(TMDAY_TABLE_TG_USERNAME_COLUMN, user.username).execute()
         if not persinfo_response.data or not tmday_response.data:
             await update.message.reply_text("Не удалось найти все необходимые данные для отчета.")
             return
-        p_data = persinfo_response.data
-        t_data = tmday_response.data
+        p_data = persinfo_response.data[0]
+        t_data = tmday_response.data[0]
         current_date = datetime.now().strftime("%d.%m.%Y")
         lid = t_data.get(TMDAY_TABLE_LID_COLUMN, 0)
         trafic = t_data.get(TMDAY_TABLE_TRAFIC_COLUMN, "00:00:00")
@@ -242,15 +239,13 @@ async def dinner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Не могу найти ваш username.")
         return
     try:
-        persinfo_select = f"{PERSINFO_TABLE_FULL_NAME_COLUMN}, {PERSINFO_TABLE_TEAM_COLUMN}, {PERSINFO_TABLE_RGTM_COLUMN}, {PERSINFO_TABLE_TEAMLEAD_COLUMN}"
-        persinfo_response = supabase.table('persinfo').select(persinfo_select).eq(PERSINFO_TABLE_TG_USERNAME_COLUMN, user.username).single().execute()
-        tmday_select = f"{TMDAY_TABLE_LID_COLUMN}, {TMDAY_TABLE_TRAFIC_COLUMN}, {TMDAY_TABLE_KZ_COLUMN}"
-        tmday_response = supabase.table('TMday').select(tmday_select).eq(TMDAY_TABLE_TG_USERNAME_COLUMN, user.username).single().execute()
+        persinfo_response = supabase.table('persinfo').select(f"{PERSINFO_TABLE_FULL_NAME_COLUMN}, {PERSINFO_TABLE_TEAM_COLUMN}, {PERSINFO_TABLE_RGTM_COLUMN}, {PERSINFO_TABLE_TEAMLEAD_COLUMN}").eq(PERSINFO_TABLE_TG_USERNAME_COLUMN, user.username).execute()
+        tmday_response = supabase.table('TMday').select(f"{TMDAY_TABLE_LID_COLUMN}, {TMDAY_TABLE_TRAFIC_COLUMN}, {TMDAY_TABLE_KZ_COLUMN}").eq(TMDAY_TABLE_TG_USERNAME_COLUMN, user.username).execute()
         if not persinfo_response.data or not tmday_response.data:
             await update.message.reply_text("Не удалось найти все необходимые данные для отчета.")
             return
-        p_data = persinfo_response.data
-        t_data = tmday_response.data
+        p_data = persinfo_response.data[0]
+        t_data = tmday_response.data[0]
         current_date = datetime.now().strftime("%d.%m.%Y")
         lid = t_data.get(TMDAY_TABLE_LID_COLUMN, 0)
         trafic = t_data.get(TMDAY_TABLE_TRAFIC_COLUMN, "00:00:00")
@@ -287,13 +282,13 @@ async def cos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Не могу найти ваш username.")
         return
     try:
-        select_query = f"{TMMONTH_TABLE_COS_COLUMN}, {TMMONTH_TABLE_MOLNII_COLUMN}"
-        response = supabase.table('TMmonth').select(select_query).eq(TMMONTH_TABLE_TG_USERNAME_COLUMN, user.username).single().execute()
+        response = supabase.table('TMmonth').select(f"{TMMONTH_TABLE_COS_COLUMN}, {TMMONTH_TABLE_MOLNII_COLUMN}").eq(TMMONTH_TABLE_TG_USERNAME_COLUMN, user.username).execute()
         if not response.data:
             await update.message.reply_text("К сожалению, не нашел ваших данных по КОСам и молниям за этот месяц.")
             return
-        cos_count = response.data.get(TMMONTH_TABLE_COS_COLUMN, 0)
-        molnii_count = response.data.get(TMMONTH_TABLE_MOLNII_COLUMN, 0)
+        data = response.data[0]
+        cos_count = data.get(TMMONTH_TABLE_COS_COLUMN, 0)
+        molnii_count = data.get(TMMONTH_TABLE_MOLNII_COLUMN, 0)
         text = f"У вас {cos_count} косов 👎 и {molnii_count} молний ⚡️"
         await update.message.reply_text(text)
     except Exception as e:
