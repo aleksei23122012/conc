@@ -128,7 +128,7 @@ async def send_welcome_message_with_menu(update: Update, context: ContextTypes.D
         [InlineKeyboardButton("Дашборд", web_app=WebAppInfo(url=URL_DASHBOARD))],
         [InlineKeyboardButton("Отработка возражений", web_app=WebAppInfo(url=URL_ALMANAC))],
         [InlineKeyboardButton("База знаний", url=URL_KNOWLEDGE_BASE)],
-        [InlineKeyboardButton("Геймификация", web_app=WebAppInfo(url=URL_GAMIFICATION))]
+        [InlineKeyboardButton("Геймификация (в разработке)", web_app=WebAppInfo(url=URL_GAMIFICATION))]
     ])
     reply_markup = InlineKeyboardMarkup(keyboard_layout)
     
@@ -139,6 +139,7 @@ async def send_welcome_message_with_menu(update: Update, context: ContextTypes.D
         "✨ Дашборд — вся важная информация у тебя под рукой 📊\n"
         "✨ Отработка возражений — шаблоны и рекомендации ⛔️\n"
         "✨ База знаний — полезные статьи и советы 📒\n"
+        "✨ Геймификация — совершенствуйся и получай призы 🎮\n"
         "✨ Узнать свои КОСы и молнии: /cos ⚖️\n"
         "✨ Отзывы и предложения: /yummy ✍️\n"
         "✨ Команды для отчетов: /breakfast /lunch /dinner 🥨\n"
@@ -147,7 +148,7 @@ async def send_welcome_message_with_menu(update: Update, context: ContextTypes.D
     try:
         response = supabase.table('persinfo').select(PERSINFO_TABLE_DOLG_COLUMN).eq(PERSINFO_TABLE_TG_USERNAME_COLUMN, user.username).execute()
         if response.data and response.data[0].get(PERSINFO_TABLE_DOLG_COLUMN) == "Админ":
-            welcome_text += "\n✨ Памятка по админским командам здесь /admin 🎮"
+            welcome_text += "\n✨ Памятка по админским командам здесь /admin 🛠"
     except Exception as e:
         logger.warning(f"Не удалось проверить роль для пользователя {user.username}: {e}")
     await context.bot.send_message(chat_id=chat_id, text=welcome_text, reply_markup=reply_markup)
